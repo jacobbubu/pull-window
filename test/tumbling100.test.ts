@@ -71,6 +71,7 @@ describe('pull-window', () => {
       pull.count(100),
       groupTo100(),
       pull.collect(function (err, ary) {
+        expect(err).toBeFalsy()
         expect(ary).toEqual(expected)
         done()
       })
