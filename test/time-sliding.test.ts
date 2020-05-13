@@ -20,7 +20,7 @@ describe('pull-window', () => {
       pull.asyncMap(function (data, cb) {
         setTimeout(function () {
           cb(null, data)
-        }, 100)
+        }, 200)
       }),
       window(function (_, cb) {
         if (timer) return
@@ -28,7 +28,7 @@ describe('pull-window', () => {
         timer = setTimeout(function () {
           timer = null
           cb(null, acc)
-        }, 300)
+        }, 600)
         return function (end, data) {
           if (end) return
           acc += data
