@@ -1,9 +1,13 @@
 import * as pull from 'pull-stream'
 import looper from '@jacobbubu/looper'
 
-export type WindowClosed<U> = (end: pull.EndOrError, _data: U) => void
-export type WindowUpdater<T> = (end: pull.EndOrError, data: T) => void
-export type WindowInit<T, U> = (data: T, cb: WindowClosed<U>) => WindowUpdater<T> | void
+export type CloseWindow<U> = (end: pull.EndOrError, _data: U) => void
+export type WindowUpdater<T> = (end: pull.EndOrError, data: T, nextId?: number) => void
+export type WindowInit<T, U> = (
+  data: T,
+  closeWindow: CloseWindow<U>,
+  nextId?: number
+) => WindowUpdater<T> | void
 
 export interface Result<T, U> {
   start: T
@@ -26,30 +30,74 @@ const window = function <T, U>(init: WindowInit<T, U>, mapper?: ResultMapper<T, 
     const output: Result<T, U>[] = []
     let ended: pull.EndOrError | null = null
 
+    let storedCb: pull.SourceCallback<any> | null = null
+    let reading = false
+    let aborted: pull.Abort = null
+
     return function newRead(abort: pull.Abort, cb: pull.SourceCallback<any>) {
+      if (abort) {
+        aborted = abort
+        if (storedCb) {
+          if (output.length) {
+            const _cb = storedCb
+            storedCb = null
+            _cb(null, output.shift())
+          } else {
+            const _cb = storedCb
+            storedCb = null
+            _cb(abort)
+          }
+        }
+        if (!reading) {
+          return rawRead(abort, cb)
+        }
+        return
+      }
+
       if (output.length) return cb(null, output.shift())
       if (ended) return cb(ended)
 
+      storedCb = cb
+
+      if (reading) return
+
+      function callback(end?: pull.EndOrError) {
+        if (storedCb) {
+          const _cb = storedCb
+          storedCb = null
+          if (end) {
+            _cb(end)
+          } else {
+            _cb(null, output.shift())
+          }
+        }
+      }
       const next = looper(function () {
-        rawRead(null, function (end: pull.EndOrError, data?: T) {
+        reading = true
+        rawRead(aborted, function (end: pull.EndOrError, data?: T) {
+          reading = false
           let windowUpdater: WindowUpdater<T> | void
           let once = false
+          const start = data
 
           if (end) {
             ended = end
           }
 
-          const windowClosed = (_: pull.EndOrError, _data: U) => {
-            if (once) return
+          const closeWindow = (_: pull.EndOrError, _data: U) => {
+            if (once) {
+              return
+            }
 
             once = true
             delete windows[windows.indexOf(windowUpdater as WindowUpdater<T>)]
-            output.push(mapper!(data!, _data))
+            output.push(mapper!(start!, _data))
+            callback()
           }
 
           if (!ended) {
             // Check if a new window should be opened
-            windowUpdater = init(data!, windowClosed)
+            windowUpdater = init(data!, closeWindow)
           }
 
           if (windowUpdater) {
@@ -64,12 +112,15 @@ const window = function <T, U>(init: WindowInit<T, U>, mapper?: ResultMapper<T, 
             updater(end, data!)
           })
 
-          if (output.length) {
-            return cb(null, output.shift())
-          } else if (ended) {
-            return cb(ended)
-          } else {
-            next()
+          if (storedCb) {
+            if (output.length) {
+              return callback()
+            } else if (ended) {
+              return callback(ended)
+            } else {
+              // We need more data to fill the window
+              next()
+            }
           }
         })
       })
@@ -81,7 +132,7 @@ const window = function <T, U>(init: WindowInit<T, U>, mapper?: ResultMapper<T, 
 window.recent = function <T, U>(size: number | null, time?: number) {
   let current: T[] | null = null
   return window<T, U>(
-    function (_: T, windowClosed: WindowClosed<U>) {
+    function (_: T, closeWindow: CloseWindow<U>) {
       if (current) return
 
       current = []
@@ -92,8 +143,9 @@ window.recent = function <T, U>(size: number | null, time?: number) {
         current = null
         if (timer) {
           clearTimeout(timer)
+          timer = null
         }
-        windowClosed(null, (_current as any) as U)
+        closeWindow(null, (_current as any) as U)
       }
 
       if (time) {
@@ -118,7 +170,7 @@ window.recent = function <T, U>(size: number | null, time?: number) {
 }
 
 window.sliding = function <T>(reduce: (acc: T[], curr: T) => T[], width: number = 10) {
-  return window(function (data: T, cb: WindowClosed<T[]>) {
+  return window(function (data: T, closeWindow: CloseWindow<T[]>) {
     let acc: T[]
     let i = 0
 
@@ -126,7 +178,7 @@ window.sliding = function <T>(reduce: (acc: T[], curr: T) => T[], width: number 
       if (end) return
       acc = reduce(acc, data)
       if (width <= ++i) {
-        cb(null, acc)
+        closeWindow(null, acc)
       }
     }
   })

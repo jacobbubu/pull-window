@@ -1,5 +1,5 @@
 import * as pull from 'pull-stream'
-import { window, WindowClosed } from '../src'
+import { window, CloseWindow } from '../src'
 
 const expected = [
   { start: 0, data: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] },
@@ -42,7 +42,7 @@ const expected = [
 
 function groupTo100() {
   let sum: number[] = []
-  return window(function (_: number, cb: WindowClosed<number[]>) {
+  return window(function (_: number, closeWindow: CloseWindow<number[]>) {
     if (sum.length) return
     // if you don't want to start a window here,
     // return undefined
@@ -51,7 +51,7 @@ function groupTo100() {
     // this will be called all data
     // until you callback.
     return function (end, data: number) {
-      if (end) return cb(null, sum)
+      if (end) return closeWindow(null, sum)
       sum.push(data)
       const total = sum.reduce(function (a, b) {
         return a + b
@@ -59,7 +59,7 @@ function groupTo100() {
       if (total >= 100) {
         const _sum = sum
         sum = []
-        cb(null, _sum)
+        closeWindow(null, _sum)
       }
     }
   })
