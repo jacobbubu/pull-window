@@ -42,10 +42,6 @@ const window = function <T, U>(init: WindowInit<T, U>, mapper?: ResultMapper<T, 
             const _cb = storedCb
             storedCb = null
             _cb(null, output.shift())
-          } else {
-            const _cb = storedCb
-            storedCb = null
-            _cb(abort)
           }
         }
         if (!reading) {
